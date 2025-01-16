@@ -1,0 +1,9 @@
+[package]
+name = "btrfs-subvol-size"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+walkdir = "=2.3.3"
+libbtrfsrs = { path = "../libbtrfsrs" }
+clap = { version = "4.5.23", features = ["derive"] }
