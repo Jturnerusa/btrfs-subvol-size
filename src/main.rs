@@ -67,11 +67,26 @@ fn run() -> Result<(), Error> {
                                 .or_default()
                                 .insert((extent.disk_bytenr.get(), extent.num_bytes.get()));
                         }
-                        _ => (),
+                        Ok(_) => continue,
+                        Err(e) => {
+                            return Err(Error {
+                                message: format!(
+                                    "failed to walk subvolume tree: {}",
+                                    root.name.as_path().to_str().unwrap_or("?")
+                                ),
+                                source: Some(Box::new(e)),
+                            })
+                        }
                     }
                 }
             }
-            _ => (),
+            Ok(_) => continue,
+            Err(e) => {
+                return Err(Error {
+                    message: "failed to walk root tree".to_string(),
+                    source: Some(Box::new(e)),
+                })
+            }
         }
     }
 
