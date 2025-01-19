@@ -1,0 +1,14 @@
+This program calculates the total and exclusive data set for btrfs subvolumes.
+
+It works by iterating every subvolume, and then every extent, and keeping track of the extents that the subvolume references. This operation is *very* slow.
+
+* usage
+
+After building with ~cargo build~, put the resulting binary on ~$PATH~ or use ~cargo run~ to run the program.
+
+#+BEGIN_SRC bash
+  sudo btrfs-subvol-size --root=/
+#+END_SRC
+
+* todo
+Make an ebuild to install the program "properly".
