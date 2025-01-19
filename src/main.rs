@@ -8,7 +8,7 @@ use std::{
 use clap::Parser;
 use libbtrfsrs::{
     tree_search::{Item, Tree},
-    Subvolume, TreeSearch,
+    TreeSearch,
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -103,8 +103,4 @@ fn run() -> Result<(), Error> {
     });
 
     Ok(())
-}
-
-fn to_mb(i: u64) -> u64 {
-    i / 1024u64.pow(2)
 }
