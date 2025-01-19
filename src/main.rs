@@ -1,11 +1,16 @@
 use core::{fmt, option::Option};
-use std::{collections::HashSet, fs::File, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    path::PathBuf,
+};
 
 use clap::Parser;
 use libbtrfsrs::{
     tree_search::{Item, Tree},
     Subvolume, TreeSearch,
 };
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 #[derive(Debug)]
 struct Error {
@@ -15,8 +20,6 @@ struct Error {
 
 #[derive(clap::Parser)]
 struct Args {
-    #[arg(long)]
-    subvolume: PathBuf,
     #[arg(long)]
     root: PathBuf,
 }
@@ -46,99 +49,58 @@ fn run() -> Result<(), Error> {
         source: Some(Box::new(e)),
     })?;
 
-    let target_file = File::open(args.subvolume.as_path()).map_err(|e| Error {
-        message: "failed to open target subvol".to_string(),
-        source: Some(Box::new(e)),
-    })?;
+    let mut subvols: HashMap<PathBuf, HashSet<(u64, u64)>> = HashMap::new();
 
-    let target_subvol = match Subvolume::new(&target_file) {
-        Ok(Some(subvol)) => subvol,
-        Ok(Option::None) => {
-            return Err(Error {
-                message: "target parameter is not a subvolume".to_string(),
-                source: None,
-            })
-        }
-        Err(e) => {
-            return Err(Error {
-                message: "target while opening root subvolume".to_string(),
-                source: Some(Box::new(e)),
-            })
-        }
-    };
-
-    let target_info = target_subvol.info().map_err(|e| Error {
-        message: "failed to fetch subvolume info".to_string(),
-        source: Some(Box::new(e)),
-    })?;
-
-    let mut extents: HashSet<(u64, u64)> = HashSet::new();
-
-    eprintln!("collecting target subvolume extents");
-
-    for item in TreeSearch::search_all(&target_file, Tree::Subvol(target_info.tree_id)) {
-        match item {
-            Ok((_, Item::FileExtentReg(extent))) => {
-                extents.insert((extent.disk_bytenr.get(), extent.disk_num_bytes.get()));
-            }
-            Ok(_) => continue,
-            Err(e) => {
-                return Err(Error {
-                    message: "error walking target subvolume tree".to_string(),
-                    source: Some(Box::new(e)),
-                })
-            }
-        }
-    }
-
-    let total_use = extents.iter().map(|(_, count)| *count).sum::<u64>();
-
-    for item in TreeSearch::search_all(&root_file, Tree::Root) {
-        match item {
-            Ok((key, Item::RootBackRef(back_ref))) if key.objectid != target_info.tree_id => {
+    for root_item in TreeSearch::search_all(&root_file, Tree::Root) {
+        match root_item {
+            Ok((key, Item::RootBackRef(root))) => {
                 eprintln!(
-                    "removing subvolume {}s extents from the set",
-                    back_ref.name.as_path().to_str().unwrap()
+                    "collecting extents for subvol {}",
+                    root.name.as_path().to_str().unwrap_or("?")
                 );
+
                 for item in TreeSearch::search_all(&root_file, Tree::Subvol(key.objectid)) {
                     match item {
-                        Ok((_, Item::FileExtentReg(extent))) => {
-                            if extents
-                                .contains(&(extent.disk_bytenr.get(), extent.disk_num_bytes.get()))
-                            {
-                                extents.remove(&(
-                                    extent.disk_bytenr.get(),
-                                    extent.disk_num_bytes.get(),
-                                ));
-                            }
+                        Ok((key, Item::FileExtentReg(extent))) => {
+                            subvols
+                                .entry(root.name.clone())
+                                .or_default()
+                                .insert((extent.disk_bytenr.get(), extent.num_bytes.get()));
                         }
-                        Ok(_) => continue,
-                        Err(e) => {
-                            return Err(Error {
-                                message: "error walking target subvolume tree".to_string(),
-                                source: Some(Box::new(e)),
-                            })
-                        }
+                        _ => (),
                     }
                 }
             }
-            Ok(_) => continue,
-            Err(e) => {
-                return Err(Error {
-                    message: "error walking root tree".to_string(),
-                    source: Some(Box::new(e)),
-                })
-            }
+            _ => (),
         }
     }
 
-    let exclusive_use = extents.iter().map(|(_, count)| *count).sum::<u64>();
+    subvols.par_iter().for_each(|(subvol, extents)| {
+        let other = subvols
+            .iter()
+            .filter_map(|(s, e)| {
+                if s == subvol {
+                    None
+                } else {
+                    Some(e.iter().copied())
+                }
+            })
+            .flatten()
+            .collect::<HashSet<_, _>>();
 
-    println!(
-        "total: {}\nexclusive: {}",
-        to_mb(total_use),
-        to_mb(exclusive_use)
-    );
+        let difference = extents - &other;
+
+        let total = extents.iter().map(|(_, num_bytes)| *num_bytes).sum::<u64>();
+        let exclusive = difference
+            .iter()
+            .map(|(_, num_bytes)| *num_bytes)
+            .sum::<u64>();
+
+        println!(
+            "{total} {exclusive} {}",
+            subvol.as_path().to_str().unwrap_or("?")
+        );
+    });
 
     Ok(())
 }
