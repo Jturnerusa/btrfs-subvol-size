@@ -61,7 +61,7 @@ fn run() -> Result<(), Error> {
 
                 for item in TreeSearch::search_all(&root_file, Tree::Subvol(key.objectid)) {
                     match item {
-                        Ok((key, Item::FileExtentReg(extent))) => {
+                        Ok((_, Item::FileExtentReg(extent))) => {
                             subvols
                                 .entry(root.name.clone())
                                 .or_default()
