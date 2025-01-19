@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 walkdir = "=2.3.3"
-libbtrfsrs = { path = "../libbtrfsrs" }
+libbtrfsrs = { git = "https://github.com/Jturnerusa/libbtrfsrs", rev = "694f9fec15bd6dbf4064d9d3d153803fbc4e68cc" }
 clap = { version = "4.5.23", features = ["derive"] }
+rayon = "1.10.0"
