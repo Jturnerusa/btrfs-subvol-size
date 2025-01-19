@@ -37,6 +37,10 @@ fn main() {
         Ok(_) => (),
         Err(e) => {
             eprintln!("{e}");
+
+            if let Some(s) = e.source {
+                eprintln!("caused by: {s}")
+            }
         }
     }
 }
