@@ -12,10 +12,13 @@ use libbtrfsrs::{
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
+type SubvolId = u64;
+type Extent = (u64, u64);
+
 #[derive(Debug)]
 struct Error {
     message: String,
-    source: Option<Box<dyn std::error::Error>>,
+    source: Option<Box<dyn std::error::Error + Send>>,
 }
 
 #[derive(clap::Parser)]
@@ -53,7 +56,7 @@ fn run() -> Result<(), Error> {
         source: Some(Box::new(e)),
     })?;
 
-    let mut subvols: HashMap<PathBuf, HashSet<(u64, u64)>> = HashMap::new();
+    let mut subvols: HashMap<SubvolId, HashSet<Extent>> = HashMap::new();
 
     for root_item in TreeSearch::search_all(&root_file, Tree::Root) {
         match root_item {
@@ -67,7 +70,7 @@ fn run() -> Result<(), Error> {
                     match item {
                         Ok((_, Item::FileExtentReg(extent))) => {
                             subvols
-                                .entry(root.name.clone())
+                                .entry(key.objectid)
                                 .or_default()
                                 .insert((extent.disk_bytenr.get(), extent.num_bytes.get()));
                         }
@@ -94,11 +97,11 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    subvols.par_iter().for_each(|(subvol, extents)| {
+    subvols.par_iter().try_for_each(|(id, extents)| {
         let other = subvols
             .iter()
             .filter_map(|(s, e)| {
-                if s == subvol {
+                if s == id {
                     None
                 } else {
                     Some(e.iter().copied())
@@ -115,11 +118,43 @@ fn run() -> Result<(), Error> {
             .map(|(_, num_bytes)| *num_bytes)
             .sum::<u64>();
 
+        let name = match get_subvol_name(*id, &root_file) {
+            Ok(Some(name)) => name,
+            Ok(None) => {
+                return Err(Error {
+                    message: "failed to find name for subvolume {id}".to_string(),
+                    source: None,
+                })
+            }
+            Err(e) => return Err(e),
+        };
+
         println!(
             "{total} {exclusive} {}",
-            subvol.as_path().to_str().unwrap_or("?")
+            name.as_path().to_str().unwrap_or("?")
         );
-    });
+
+        Ok(())
+    })?;
 
     Ok(())
+}
+
+fn get_subvol_name(id: u64, root: &File) -> Result<Option<PathBuf>, Error> {
+    for item in TreeSearch::search_all(root, Tree::Root) {
+        match item {
+            Ok((key, Item::RootBackRef(root))) if key.objectid == id => {
+                return Ok(Some(root.name.clone()))
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                return Err(Error {
+                    message: "failed to walk root tree".to_string(),
+                    source: Some(Box::new(e)),
+                })
+            }
+        }
+    }
+
+    Ok(None)
 }
